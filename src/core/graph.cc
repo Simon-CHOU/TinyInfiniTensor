@@ -1,4 +1,6 @@
 #include "core/graph.h"
+#include "operators/matmul.h"
+#include "operators/transpose.h"
 #include <algorithm>
 #include <numeric>
 #include <queue>
@@ -107,6 +109,148 @@ namespace infini
         // 1. 去除冗余的算子（例如，两个相邻的算子都是 transpose 算子，且做的是相反的操作，可以将其全部删除）
         // 2. 合并算子（例如，矩阵乘算子中含有属性transA、transB，如果其输入存在transpose，且对最后两个维度做交换，就可以将transpose融入到矩阵乘算子的属性中去）
         // =================================== 作业 ===================================
+        IT_ASSERT(topo_sort() == true);
+
+        auto detachOp = [&](const Operator &op)
+        {
+            for (auto &t : op->getInputs())
+                t->removeTarget(op);
+            for (auto &t : op->getOutputs())
+                t->setSource(Operator());
+            for (auto &p : op->getPredecessors())
+                p->removeSuccessors(op);
+            for (auto &s : op->getSuccessors())
+                s->removePredecessors(op);
+            removeOperator(op);
+        };
+
+        auto reconnectInput = [&](const Operator &consumer, const Tensor &oldT,
+                                  const Tensor &newT)
+        {
+            consumer->replaceInput(oldT, newT);
+            oldT->removeTarget(consumer);
+            newT->addTarget(consumer);
+            if (auto oldSrc = oldT->getSource())
+            {
+                consumer->removePredecessors(oldSrc);
+                oldSrc->removeSuccessors(consumer);
+            }
+            if (auto newSrc = newT->getSource())
+            {
+                consumer->addPredecessors(newSrc);
+                newSrc->addSuccessors(consumer);
+            }
+        };
+
+        auto isInversePerm = [&](const vector<int> &p1, const vector<int> &p2)
+        {
+            if (p1.size() != p2.size())
+                return false;
+            for (size_t i = 0; i < p1.size(); ++i)
+            {
+                if (p1[i] < 0 || p1[i] >= static_cast<int>(p2.size()))
+                    return false;
+                if (p2[p1[i]] != static_cast<int>(i))
+                    return false;
+            }
+            return true;
+        };
+
+        auto isSwapLastTwo = [&](const vector<int> &p)
+        {
+            if (p.size() < 2)
+                return false;
+            for (size_t i = 0; i + 2 < p.size(); ++i)
+            {
+                if (p[i] != static_cast<int>(i))
+                    return false;
+            }
+            size_t n = p.size();
+            return p[n - 2] == static_cast<int>(n - 1) &&
+                   p[n - 1] == static_cast<int>(n - 2);
+        };
+
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            for (auto &op : ops)
+            {
+                if (op->getOpType() == OpType::Transpose)
+                {
+                    auto t1 = as<TransposeObj>(op);
+                    if (!t1)
+                        continue;
+                    auto t1Out = op->getOutputs()[0];
+                    auto t1Targets = t1Out->getTargets();
+                    if (t1Targets.size() != 1)
+                        continue;
+                    auto op2 = t1Targets[0];
+                    if (!op2 || op2->getOpType() != OpType::Transpose)
+                        continue;
+                    if (op2->getInputs()[0]  != t1Out)
+                        continue;
+                    auto t2 = as<TransposeObj>(op2);
+                    if (!t2)
+                        continue;
+                    if (!isInversePerm(t1->getPermute(), t2->getPermute()))
+                        continue;
+
+                    auto tIn = op->getInputs()[0];
+                    auto tOut = op2->getOutputs()[0];
+                    auto consumers = tOut->getTargets();
+                    for (auto &consumer : consumers)
+                        reconnectInput(consumer, tOut, tIn);
+
+                    detachOp(op2);
+                    detachOp(op);
+                    if (t1Out->getTargets().empty() && !t1Out->getSource())
+                        removeTensor(t1Out);
+                    if (tOut->getTargets().empty() && !tOut->getSource())
+                        removeTensor(tOut);
+
+                    changed = true;
+                    break;
+                }
+
+                if (op->getOpType() == OpType::MatMul)
+                {
+                    auto mm = as<MatmulObj>(op);
+                    if (!mm)
+                        continue;
+                    for (size_t idx = 0; idx < 2; ++idx)
+                    {
+                        auto tIn = op->getInputs(idx);
+                        auto src = tIn->getSource();
+                        if (!src || src->getOpType() != OpType::Transpose)
+                            continue;
+                        auto tOp = as<TransposeObj>(src);
+                        if (!tOp)
+                            continue;
+                        if (tIn->getTargets().size() != 1)
+                            continue;
+                        if (!isSwapLastTwo(tOp->getPermute()))
+                            continue;
+
+                        auto srcIn = src->getInputs(0);
+                        reconnectInput(op, tIn, srcIn);
+                        if (idx == 0)
+                            mm->setTransA(!mm->getTransA());
+                        else
+                            mm->setTransB(!mm->getTransB());
+
+                        detachOp(src);
+                        if (tIn->getTargets().empty() && !tIn->getSource())
+                            removeTensor(tIn);
+
+                        changed = true;
+                        break;
+                    }
+                    if (changed)
+                        break;
+                }
+            }
+        }
     }
 
     Tensor GraphObj::getTensor(int fuid) const
