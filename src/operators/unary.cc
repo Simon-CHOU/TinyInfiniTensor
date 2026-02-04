@@ -39,7 +39,8 @@ namespace infini
         // TODO：返回经过 clip 操作后的 shape
         // REF: https://onnx.ai/onnx/operators/onnx__Clip.html#clip-13
         // =================================== 作业 ===================================
-        return std::nullopt;
+        return {{inputs[0]->getDims()}};
+        // return std::nullopt;
     }
 
     std::string ClipObj::toString() const
