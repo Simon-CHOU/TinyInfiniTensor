@@ -5,9 +5,10 @@ on:
       - '**.md'
       - 'LICENSE'
   pull_request:
-    paths:
+    paths-ignore:
       - '**.md'
       - 'LICENSE'
+  workflow_dispatch:
 
 jobs:
   build:
