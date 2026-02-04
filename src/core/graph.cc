@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <numeric>
 #include <queue>
+#include <unordered_map>
 
 namespace infini
 {
@@ -152,6 +153,21 @@ namespace infini
         // TODO：利用 allocator 给计算图分配内存
         // HINT: 获取分配好的内存指针后，可以调用 tensor 的 setDataBlob 函数给 tensor 绑定内存
         // =================================== 作业 ===================================
+        std::unordered_map<TensorObj *, size_t> offsets;
+        offsets.reserve(tensors.size());
+        for (auto &tensor : tensors)
+        {
+            size_t offset = allocator.alloc(tensor->getBytes());
+            offsets[tensor.get()] = offset;
+        }
+
+        void *base = allocator.getPtr();
+        for (auto &tensor : tensors)
+        {
+            auto offset = offsets.at(tensor.get());
+            auto ptr = static_cast<uint8_t *>(base) + offset;
+            tensor->setDataBlob(make_ref<BlobObj>(runtime, ptr));
+        }
 
         allocator.info();
     }

@@ -32,8 +32,31 @@ namespace infini
         // =================================== 作业 ===================================
         // TODO: 设计一个算法来分配内存，返回起始地址偏移量
         // =================================== 作业 ===================================
+       for (auto it = freeByAddr.begin(); it != freeByAddr.end(); ++it)
+        {
+            if (it->second >= size)
+            {
+                size_t addr = it->first;
+                size_t blockSize = it->second;
+                size_t blockEnd = addr + blockSize;
+                freeByAddr.erase(it);
+                freeByEnd.erase(blockEnd);
+                if (blockSize > size)
+                {
+                    size_t newAddr = addr + size;
+                    size_t newSize = blockSize - size;
+                    freeByAddr[newAddr] = newSize;
+                    freeByEnd[newAddr + newSize] = newAddr;
+                }
+                return addr;
+            }
+        }
 
-        return 0;
+        size_t addr = used;
+        used += size;
+        peak = std::max(peak, used);
+        return addr;
+        // return 0;
     }
 
     void Allocator::free(size_t addr, size_t size)
@@ -44,6 +67,53 @@ namespace infini
         // =================================== 作业 ===================================
         // TODO: 设计一个算法来回收内存
         // =================================== 作业 ===================================
+        size_t start = addr;
+        size_t end = addr + size;
+
+        auto leftIt = freeByEnd.find(start);
+        if (leftIt != freeByEnd.end())
+        {
+            size_t leftStart = leftIt->second;
+            size_t leftSize = start - leftStart;
+            freeByEnd.erase(leftIt);
+            freeByAddr.erase(leftStart);
+            start = leftStart;
+            size += leftSize;
+            end = start + size;
+        }
+
+        auto rightIt = freeByAddr.find(end);
+        if (rightIt != freeByAddr.end())
+        {
+            size_t rightStart = rightIt->first;
+            size_t rightSize = rightIt->second;
+            size_t rightEnd = rightStart + rightSize;
+            freeByAddr.erase(rightIt);
+            freeByEnd.erase(rightEnd);
+            size += rightSize;
+            end = start + size;
+        }
+
+        if (end == used)
+        {
+            used = start;
+            while (true)
+            {
+                auto it = freeByEnd.find(used);
+                if (it == freeByEnd.end())
+                {
+                    break;
+                }
+                size_t prevStart = it->second;
+                freeByEnd.erase(it);
+                freeByAddr.erase(prevStart);
+                used = prevStart;
+            }
+            return;
+        }
+
+        freeByAddr[start] = size;
+        freeByEnd[start + size] = start;
     }
 
     void *Allocator::getPtr()
